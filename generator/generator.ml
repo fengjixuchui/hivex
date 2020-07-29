@@ -1729,6 +1729,19 @@ caml_raise_with_args (value tag, int nargs, value args[])
 }
 #endif
 
+/* Replacement if caml_alloc_initialized_string is missing, added
+ * to OCaml runtime in 2017.
+ */
+#ifndef HAVE_CAML_ALLOC_INITIALIZED_STRING
+static inline value
+caml_alloc_initialized_string (mlsize_t len, const char *p)
+{
+  value sv = caml_alloc_string (len);
+  memcpy ((char *) String_val (sv), p, len);
+  return sv;
+}
+#endif
+
 #include <hivex.h>
 
 #define Hiveh_val(v) (*((hive_h **)Data_custom_val(v)))
@@ -1915,8 +1928,7 @@ static void raise_closed (const char *) Noreturn;
            if f_len_exists name then (
              pr "  size_t sz;\n  sz = hivex_%s_len (%s);\n"
                name (String.concat ", " c_params);
-             pr "  rv = caml_alloc_string (sz);\n";
-             pr "  memcpy (String_val (rv), r, sz);\n"
+             pr "  rv = caml_alloc_initialized_string (sz, r);\n"
            ) else
              pr "  rv = caml_copy_string (r);\n";
            pr "  free (r);\n"
@@ -1961,10 +1973,12 @@ HiveSetValue_val (value v)
 {
   hive_set_value *val = malloc (sizeof (hive_set_value));
 
-  val->key = String_val (Field (v, 0));
+  if (val == NULL) caml_raise_out_of_memory ();
+
+  val->key = (char *) String_val (Field (v, 0));
   val->t = HiveType_val (Field (v, 1));
   val->len = caml_string_length (Field (v, 2));
-  val->value = String_val (Field (v, 2));
+  val->value = (char *) String_val (Field (v, 2));
 
   return val;
 }
@@ -1977,12 +1991,14 @@ HiveSetValues_val (value v)
   size_t i;
   value v2;
 
+  if (values == NULL) caml_raise_out_of_memory ();
+
   for (i = 0; i < nr_values; ++i) {
     v2 = Field (v, i);
-    values[i].key = String_val (Field (v2, 0));
+    values[i].key = (char *) String_val (Field (v2, 0));
     values[i].t = HiveType_val (Field (v2, 1));
     values[i].len = caml_string_length (Field (v2, 2));
-    values[i].value = String_val (Field (v2, 2));
+    values[i].value = (char *) String_val (Field (v2, 2));
   }
 
   return values;
@@ -2071,8 +2087,7 @@ copy_type_value (const char *r, size_t len, hive_type t)
   rv = caml_alloc (2, 0);
   v = Val_hive_type (t);
   Store_field (rv, 0, v);
-  v = caml_alloc_string (len);
-  memcpy (String_val (v), r, len);
+  v = caml_alloc_initialized_string (len, r);
   caml_modify (&Field (rv, 1), v);
   CAMLreturn (rv);
 }
